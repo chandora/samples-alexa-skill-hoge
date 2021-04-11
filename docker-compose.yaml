@@ -1,0 +1,13 @@
+version: "3"
+services:
+  s3-local:
+    container_name: s3local
+    image: minio/minio
+    ports:
+      - 9000:9000
+    command: server /data
+    volumes:
+      - /data:/data
+    environment:
+      - MINIO_ACCESS_KEY=myminioadmin
+      - MINIO_SECRET_KEY=myminioadmin

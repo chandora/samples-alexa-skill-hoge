@@ -4,17 +4,25 @@
  * session persistence, api calls, and more.
  * */
 const Alexa = require('ask-sdk-core');
+const AWS = require('aws-sdk');
+const Adapter = require('ask-sdk-s3-persistence-adapter');
+require('dotenv').config()
 
 const LaunchRequestHandler = {
     canHandle(handlerInput) {
         return Alexa.getRequestType(handlerInput.requestEnvelope) === 'LaunchRequest';
     },
-    handle(handlerInput) {
-        const speakOutput = 'Welcome, you can say Hello or Help. Which would you like to try?';
-
+    async handle(handlerInput) {
+        const attributesManager = handlerInput.attributesManager;
+        let s3Attributes = await attributesManager.getPersistentAttributes() || { counter: 0 };
+        let counter = s3Attributes.counter || 1;
+        const speakOutput = `${counter}回目の呼び出しです`;
+        ++counter;
+        s3Attributes.counter = counter;
+        attributesManager.setPersistentAttributes(s3Attributes);
+        await attributesManager.savePersistentAttributes();
         return handlerInput.responseBuilder
             .speak(speakOutput)
-            .reprompt(speakOutput)
             .getResponse();
     }
 };
@@ -136,6 +144,48 @@ const ErrorHandler = {
     }
 };
 
+function createS3Config() {
+    const bucketName = process.env.S3_PERSISTENCE_BUCKET;
+    const isLocal = process.env.SKILL_LOCAL ? true : false;
+    let s3Config;
+    if (isLocal) {
+        console.log('Local Environment');
+        console.log(`S3 Bucket Name = ${bucketName}`);
+        const accessKeyId = process.env.MINIO_ACCESS_KEY_ID;
+        const secretAccessKey = process.env.MINIO_SECRET_ACCESS_KEY;
+        const minioHost = process.env.MINIO_HOST;
+        const minioPort = process.env.MINIO_PORT;
+        console.log(`Access Key = ${accessKeyId}`);
+        console.log(`Secret Access Key = ${secretAccessKey}`);
+        console.log(`MINIO Host = ${minioHost}`);
+        console.log(`MINIO Port = ${minioPort}`);
+        const s3Client = new AWS.S3({
+            accessKeyId: accessKeyId,
+            secretAccessKey: secretAccessKey,
+            endpoint: `http://${minioHost}:${minioPort}/`,
+            s3ForcePathStyle: true,
+            signatureVersion: 'v4'
+        });
+        s3Config = {
+            bucketName: bucketName,
+            objectKeyGenerator: (param) => { return 'myObjectKey'; },
+            // pathPrefix: 'chandora',
+            s3Client: s3Client
+        };
+    }
+    else {
+        const bucketName = process.env.S3_PERSISTENCE_BUCKET;
+        console.log('Remote Environment');
+        console.log(`S3 Bucket Name = ${bucketName}`);
+        s3Config = {
+            bucketName: bucketName
+        };
+    }
+    return s3Config;
+}
+
+const persistenceAdapter = new Adapter.S3PersistenceAdapter(createS3Config());
+
 /**
  * This handler acts as the entry point for your skill, routing all request and response
  * payloads to the handlers above. Make sure any new handlers or interceptors you've
@@ -152,7 +202,8 @@ const handlers = Alexa.SkillBuilders.custom()
         IntentReflectorHandler)
     .addErrorHandlers(
         ErrorHandler)
-    .withCustomUserAgent('sample/hello-world/v1.2');
+    .withCustomUserAgent('sample/hello-world/v1.2')
+    .withPersistenceAdapter(persistenceAdapter);
 
 exports.skill = handlers.create();
 exports.handler = handlers.lambda();
